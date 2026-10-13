@@ -48,10 +48,11 @@ static int __nocfi __init dfroot_init(void)
     static const char sh[] = "/system/bin/sh";
     static char *envp[] = { "PATH=/system/bin", NULL };
     static char *argv[] = { (char *)sh, "-c",
-        "touch /dev/dfm0;"
-        " rmmod oplus_secure_harden 2>/dev/null;"         //
+        "rmmod oplus_secure_harden 2>/dev/null;"         //
         " rmmod oplus_security_keventupload 2>/dev/null;" // Oppo/OnePlus
-        " rmmod oplus_security_guard 2>/dev/null",        //
+        " rmmod oplus_security_guard 2>/dev/null;"        //
+        " touch /dev/dfm0;"
+        " exit 0",
         NULL };
 
     // Symbol finder
