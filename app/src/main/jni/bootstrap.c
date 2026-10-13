@@ -222,14 +222,16 @@ int main(void)
     touch("/dev/dfm5");
     if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
         touch("/dev/dfm6");
+        while (late_load_running()) sleep(1);
+        run_ctx(NULL, (char *[]){ "/system/bin/rmmod", "dfroot", NULL });
+        sleep(1);
         if (soft_reboot) {
-            while (late_load_running()) sleep(1);
             run_ctx("u:r:ksu:s0", (char *[]){ KSUD, "soft-reboot", NULL });
         }
     } else {
+        run_ctx(NULL, (char *[]){ "/system/bin/rmmod", "dfroot", NULL });
         touch("/dev/dfme2");
     }
 
-    run_ctx(NULL, (char *[]){ "/system/bin/rmmod", "dfroot", NULL });
     return 0;
 }
