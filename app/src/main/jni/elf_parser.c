@@ -23,7 +23,7 @@ static int find_code_cave(int fd, uint64_t exec_off, uint64_t exec_filesz,
            shellcode_size, (unsigned long long)slack);
 
     if (lseek64(fd, exec_off, SEEK_SET) < 0) return 1;
-    uint64_t run_start = 0, run_len = 0;
+    uint64_t run_start = 0, run_len = 0, max_run_len = 0;
     char page[4096];
     for (uint64_t done = 0; done < exec_filesz; done += sizeof(page)) {
         size_t chunk = exec_filesz - done;
@@ -38,13 +38,15 @@ static int find_code_cave(int fd, uint64_t exec_off, uint64_t exec_filesz,
                     *out_off = run_start;
                     return 0;
                 }
+                if (run_len > max_run_len) max_run_len = run_len;
             } else {
                 run_len = 0;
             }
         }
     }
 
-    printf("no code cave large enough - DEVICE NOT SUPPORTED\n");
+    printf("no code cave large enough (need %zu, largest found %llu) - DEVICE NOT SUPPORTED\n",
+           shellcode_size, (unsigned long long)max_run_len);
     return 1;
 }
 
