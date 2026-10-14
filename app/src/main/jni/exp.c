@@ -408,8 +408,8 @@ static int patch_hook(const char *lib, const char *sym,
     }
     uint32_t jmpback = BRANCH |
         (((hook_off + 4) - (shell_off + stage_len - 4)) >> 2 & 0x3ffffff);
-    *(uint32_t *)&stage_data[stage_len - 4] = jmpback;
-    *(uint32_t *)&first_inst_copy[0] = first_insn;
+    *(uint32_t *)&buf[stage_len - 4] = jmpback;
+    *(uint32_t *)&buf[first_inst_copy - stage_data] = first_insn;
 
     uint64_t aligned = hook_off & ~(uint64_t)15;
     int fd = open(lib, O_RDONLY);
