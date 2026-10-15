@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
+        android:id="@+id/action_load_ko"
+        android:title="Load custom .ko"
+        android:showAsAction="never" />
+    <item
+        android:id="@+id/action_clear_ko"
+        android:title="Clear custom .ko"
+        android:showAsAction="never" />
+    <item
         android:id="@+id/action_settings"
         android:icon="@drawable/ic_settings"
         android:title="Settings"

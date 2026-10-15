@@ -15,10 +15,12 @@
 #include <sys/utsname.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <elf.h>
 #include "aes256.h"
 
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
 static char    *libcxx_ko_target;
+static char    *g_ko_file;
 
 static int      g_encap_port;
 static int      g_sender_port;
@@ -344,20 +346,46 @@ static int patch_helper(void) {
 }
 
 static int patch_ko(void) {
-    int andr = 0, major = 0, minor = 0;
-    if (read_device_versions(&andr, &major, &minor) != 0) {
-        printf("Can't parse kernel version - Non-GKI device? (unsupported)\n"); return 1;
-    }
-    const struct KoImage *ko = select_ko_image(andr, major, minor);
-    if (!ko) {
-        printf("Unsupported kernel %d.%d android %d\n", major, minor, andr); return 1;
-    }
-    printf("Using KMI: android%d-%d.%d\n",
-             ko->android_release, ko->kver_major, ko->kver_minor);
-
     size_t len;
-    char *buf = pad16(ko->start, (size_t)(ko->end - ko->start), &len);
-    if (!buf) { printf("patch: %s - pad16 alloc failed\n", libcxx_ko_target); return -1; }
+    char *buf;
+
+    if (g_ko_file) {
+        FILE *f = fopen(g_ko_file, "rb");
+        if (!f) { printf("open custom ko %s failed: %s\n", g_ko_file, strerror(errno)); return 1; }
+        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); printf("seek %s failed\n", g_ko_file); return 1; }
+        long sz = ftell(f);
+        if (sz <= 0) { fclose(f); printf("custom ko %s is empty\n", g_ko_file); return 1; }
+        rewind(f);
+        char *raw = calloc(1, (size_t)sz);
+        if (!raw) { fclose(f); printf("custom ko alloc failed\n"); return 1; }
+        if (fread(raw, 1, (size_t)sz, f) != (size_t)sz) {
+            fclose(f); free(raw);
+            printf("read %s failed: %s\n", g_ko_file, strerror(errno)); return 1;
+        }
+        fclose(f);
+        if (memcmp(raw, ELFMAG, SELFMAG) != 0) {
+            free(raw);
+            printf("custom ko %s is not an ELF module\n", g_ko_file); return 1;
+        }
+        buf = pad16(raw, (size_t)sz, &len);
+        free(raw);
+        if (!buf) { printf("custom ko - pad16 alloc failed\n"); return -1; }
+        printf("Using custom ko: %s (%ld bytes)\n", g_ko_file, sz);
+    } else {
+        int andr = 0, major = 0, minor = 0;
+        if (read_device_versions(&andr, &major, &minor) != 0) {
+            printf("Can't parse kernel version - Non-GKI device? (unsupported)\n"); return 1;
+        }
+        const struct KoImage *ko = select_ko_image(andr, major, minor);
+        if (!ko) {
+            printf("Unsupported kernel %d.%d android %d\n", major, minor, andr); return 1;
+        }
+        printf("Using KMI: android%d-%d.%d\n",
+                 ko->android_release, ko->kver_major, ko->kver_minor);
+        buf = pad16(ko->start, (size_t)(ko->end - ko->start), &len);
+        if (!buf) { printf("patch: %s - pad16 alloc failed\n", libcxx_ko_target); return -1; }
+    }
+
     printf("patch: %s <- dfroot.ko (%zu bytes)\n", libcxx_ko_target, len);
     int ret = patch_file_cbc(libcxx_ko_target, buf, len, 0, 1);
     free(buf);
@@ -478,7 +506,8 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t len) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "usage: %s --encap-port N --sender-port N --spi N --aes-key HEX\n", argv0);
+            "usage: %s --encap-port N --sender-port N --spi N --aes-key HEX [--ko-file PATH]\n",
+            argv0);
 }
 
 static int setup(int argc, char **argv) {
@@ -497,6 +526,8 @@ static int setup(int argc, char **argv) {
             spi = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(a, "--aes-key") && i + 1 < argc)
             have_aes = hex_to_bytes(argv[++i], aes_key, sizeof(aes_key)) == 0;
+        else if (!strcmp(a, "--ko-file") && i + 1 < argc)
+            g_ko_file = argv[++i];
         else { usage(argv[0]); return 2; }
     }
     if (!encap_port || !sender_port || !spi || !have_aes) {
@@ -508,6 +539,11 @@ static int setup(int argc, char **argv) {
     g_spi         = spi;
     g_seq         = 1;
     memcpy(g_aes_key, aes_key, 32);
+
+    if (g_ko_file && access(g_ko_file, R_OK) != 0) {
+        printf("custom ko %s not readable: %s\n", g_ko_file, strerror(errno));
+        return 2;
+    }
 
     const char *ko_target = detect_ko_target();
     libcxx_ko_target = libcxx_data + libcxx_ko_target_off;

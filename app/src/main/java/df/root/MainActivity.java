@@ -26,6 +26,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -34,10 +35,12 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity implements IReporter {
 
     private static final String TAG = "dfroot";
+    private static final int REQ_PICK_KO = 1001;
 
     private Button btnRun;
     private ScrollView outputScroll;
     private TextView outputView;
+    private TextView koStatusView;
     private Spinner spinnerSuManager;
     private Context mDeCtx;
     private final Handler mMain = new Handler(Looper.getMainLooper());
@@ -64,7 +67,10 @@ public class MainActivity extends Activity implements IReporter {
         btnRun = findViewById(R.id.btnRun);
         outputScroll = findViewById(R.id.outputScroll);
         outputView = findViewById(R.id.outputView);
+        koStatusView = findViewById(R.id.koStatus);
         spinnerSuManager = findViewById(R.id.spinnerSuManager);
+
+        updateKoStatus();
 
         PackageManager pm = getPackageManager();
         List<SuManagerEntry> entries = new ArrayList<>();
@@ -123,11 +129,73 @@ public class MainActivity extends Activity implements IReporter {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == R.id.action_settings) {
+        int id = item.getItemId();
+        if (id == R.id.action_settings) {
             startActivity(new Intent(this, SettingsActivity.class));
             return true;
         }
+        if (id == R.id.action_load_ko) {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            startActivityForResult(i, REQ_PICK_KO);
+            return true;
+        }
+        if (id == R.id.action_clear_ko) {
+            File ko = ExploitRunner.customKoFile(mDeCtx);
+            if (ko.exists() && !ko.delete())
+                Toast.makeText(this, "Failed to delete custom .ko", Toast.LENGTH_LONG).show();
+            else
+                Toast.makeText(this, "Custom .ko cleared, using embedded build", Toast.LENGTH_SHORT).show();
+            mDeCtx.getSharedPreferences(ExploitRunner.PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().remove(ExploitRunner.PREF_KO_DEFAULT).apply();
+            updateKoStatus();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK_KO || resultCode != RESULT_OK || data == null)
+            return;
+        try (java.io.InputStream in = getContentResolver().openInputStream(data.getData())) {
+            if (in == null) throw new IOException("cannot open selected file");
+            File ko = ExploitRunner.customKoFile(mDeCtx);
+            File tmp = new File(ko.getAbsolutePath() + ".tmp");
+            try (java.io.OutputStream out = new java.io.FileOutputStream(tmp)) {
+                byte[] buf = new byte[65536];
+                for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+            }
+            validateKo(tmp);
+            if (!tmp.renameTo(ko)) throw new IOException("rename failed");
+            mDeCtx.getSharedPreferences(ExploitRunner.PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(ExploitRunner.PREF_KO_DEFAULT, false).apply();
+            updateKoStatus();
+            Toast.makeText(this, "Custom .ko loaded, runs on next launch", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Log.e(TAG, "custom ko import failed", e);
+            Toast.makeText(this, "Not a valid arm64 kernel module: " + e, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private static void validateKo(File f) throws IOException {
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r")) {
+            byte[] h = new byte[20];
+            raf.readFully(h);
+            if (h[0] != 0x7f || h[1] != 'E' || h[2] != 'L' || h[3] != 'F')
+                throw new IOException("missing ELF magic");
+            if (h[4] != 2) throw new IOException("not ELF64");
+            if (h[5] != 1) throw new IOException("not little-endian");
+            int machine = (h[19] & 0xff) << 8 | (h[18] & 0xff);
+            if (machine != 183) throw new IOException("not AArch64");
+            if (raf.length() <= 20) throw new IOException("file too small");
+        }
+    }
+
+    private void updateKoStatus() {
+        koStatusView.setText(ExploitRunner.koStatus(mDeCtx));
     }
 
     private void updateRunButton() {
@@ -147,6 +215,7 @@ public class MainActivity extends Activity implements IReporter {
             report("\nexception: " + e + "\n");
         } finally {
             mMain.post(this::updateRunButton);
+            mMain.post(this::updateKoStatus);
         }
     }
 
