@@ -173,6 +173,23 @@ static void touch(const char *path)
         close(fd);
 }
 
+/* dfroot.ko sets global permissive before this bootstrap runs. The KSU
+ * module manages its own policy, so return the device to enforcing. */
+static void restore_enforcing(void)
+{
+    int fd = open("/sys/fs/selinux/enforce", O_WRONLY);
+    if (fd < 0) {
+        touch("/dev/dfmw2");
+        return;
+    }
+    ssize_t n = write(fd, "1", 1);
+    close(fd);
+    if (n == 1)
+        touch("/dev/dfm7");
+    else
+        touch("/dev/dfmw2");
+}
+
 /* Mark every installed module disabled before ksud runs. A broken module
  * otherwise loads on the next boot and bootloops the device. */
 static int disable_modules(void)
@@ -224,12 +241,14 @@ int main(void)
         touch("/dev/dfm6");
         while (late_load_running()) sleep(1);
         run_ctx(NULL, (char *[]){ "/system/bin/rmmod", "dfroot", NULL });
+        restore_enforcing();
         sleep(1);
         if (soft_reboot) {
             run_ctx("u:r:ksu:s0", (char *[]){ KSUD, "soft-reboot", NULL });
         }
     } else {
         run_ctx(NULL, (char *[]){ "/system/bin/rmmod", "dfroot", NULL });
+        restore_enforcing();
         touch("/dev/dfme2");
     }
 
